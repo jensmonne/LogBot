@@ -44,7 +44,8 @@ class Client(discord.Client):
 
             logging.basicConfig(
                 level=logging.INFO,
-                handlers=[self.log_file_handler, logging.StreamHandler()]
+                handlers=[self.log_file_handler, logging.StreamHandler()],
+                format='%(message)s'
             )
 
     def load_user_data(self):
@@ -80,7 +81,7 @@ class Client(discord.Client):
 
         self.setup_logger()
 
-        logging.info(f'[{datetime.now()}] {message.author}: {message.content}')
+        logging.info(f'[{datetime.now()}] {message.author}: {message.content if message.content else "Send a File"}')
 
         if message.content.startswith('!log'):
             if message.author.id == int(AUTHOR_ID):
@@ -114,17 +115,16 @@ class Client(discord.Client):
 
                     try:
                         await attachment.save(image_path)
-                        logging.info(f"Saved image to {image_path}")
-                        await message.channel.send(f"Image saved to {user_folder} as {image_name}")
+                        logging.info(f"[{datetime.now()}] Saved image to {image_path}")
                     except Exception as e:
-                        logging.error(f"Error saving image: {e}")
+                        logging.error(f"[{datetime.now()}] Error saving image: {e}")
                         await message.channel.send("There was an error saving the image.")
 
     async def repeating_task(self):
         while True:
-            await asyncio.sleep(10)
+            await asyncio.sleep(120)
 
-            print(f"Running the task at {datetime.now()}")
+            logging.info(f"[{datetime.now()}] Logging users")
 
             if self.guilds:
                 for guild in self.guilds:
@@ -145,8 +145,6 @@ class Client(discord.Client):
                                 self.users_info[user_id]['status'] = status
                             if self.users_info[user_id]['custom_status'] != custom_status:
                                 self.users_info[user_id]['custom_status'] = custom_status
-
-                        logging.info(f"[{datetime.now()}] {user_name} ({user_id}): Nickname: {nickname}, Status: {status}, Custom Status: {custom_status}")
 
                         user_file_path = os.path.join(users_path, f'{user_id}.txt')
                         with open(user_file_path, 'w', encoding='utf-8') as f:
