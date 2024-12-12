@@ -1,4 +1,5 @@
 import discord
+import asyncio
 import logging
 from datetime import datetime
 import os
@@ -9,11 +10,13 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 AUTHOR_ID = os.getenv('AUTHOR_ID')
 
-# Define the directory for logs and images
+# Define the directory for logs, images, and user files
 logs_path = './discord_logs/test_logs'
 images_path = './discord_images'
+users_path = './discord_users'
 os.makedirs(logs_path, exist_ok=True)
 os.makedirs(images_path, exist_ok=True)
+os.makedirs(users_path, exist_ok=True)
 
 class Client(discord.Client):
     def __init__(self, intents, *args, **kwargs):
@@ -21,6 +24,7 @@ class Client(discord.Client):
         self.current_log_file = None
         self.log_file_handler = None
         self.setup_logger()
+        self.users_info = {}  # To store user data (ID, name, nickname, status)
 
     def setup_logger(self):
         now = datetime.now()
@@ -45,6 +49,7 @@ class Client(discord.Client):
 
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
+        self.bot_loop_task = asyncio.create_task(self.repeating_task())
 
     async def on_message(self, message):
         print(f'Message received from {message.author}: {message.content}')
@@ -53,7 +58,6 @@ class Client(discord.Client):
 
         logging.info(f'[{datetime.now()}] {message.author}: {message.content}')
 
-        # Check for the !log command
         if message.content.startswith('!log'):
             if message.author.id == int(AUTHOR_ID):
                 if self.current_log_file:
@@ -76,19 +80,16 @@ class Client(discord.Client):
             sender_id = message.author.id
             server_name = message.guild.name if message.guild else "DMs"
 
-            # Create a folder for the user if it doesn't exist
             user_folder = f"{images_path}/{sender_name}_{sender_id}"
             os.makedirs(user_folder, exist_ok=True)
 
             for attachment in message.attachments:
                 if attachment.content_type and "image" in attachment.content_type:
-                    # Format the image filename
                     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                     image_name = f"{timestamp}_{server_name.replace(' ', '_')}.png"
                     image_path = f"{user_folder}/{image_name}"
 
                     try:
-                        # Save the image to the user's folder
                         await attachment.save(image_path)
                         logging.info(f"Saved image to {image_path}")
                         await message.channel.send(f"Image saved to {user_folder} as {image_name}")
@@ -96,9 +97,72 @@ class Client(discord.Client):
                         logging.error(f"Error saving image: {e}")
                         await message.channel.send("There was an error saving the image.")
 
+    async def repeating_task(self):
+        while True:
+            await asyncio.sleep(10)  # Adjust this interval as needed
+
+            print(f"Running the task at {datetime.now()}")
+
+            # Get server (guild) members and log their info
+            if self.guilds:
+                for guild in self.guilds:
+                    for member in guild.members:
+                        # Fetch member details
+                        user_id = member.id
+                        user_name = member.name
+                        nickname = member.nick if member.nick else "No nickname"
+                        status = str(member.status)
+                        custom_status = member.activity.name if member.activity else "No custom status"
+
+                        # Check if we have this user info already
+                        if user_id not in self.users_info:
+                            self.users_info[user_id] = {'name': user_name, 'nickname': nickname, 'status': status, 'custom_status': custom_status, 'nicknames': []}
+                        else:
+                            # Update nickname or status if changed
+                            if self.users_info[user_id]['nickname'] != nickname:
+                                self.users_info[user_id]['nicknames'].append(self.users_info[user_id]['nickname'])
+                                self.users_info[user_id]['nickname'] = nickname
+                            if self.users_info[user_id]['status'] != status:
+                                self.users_info[user_id]['status'] = status
+                            if self.users_info[user_id]['custom_status'] != custom_status:
+                                self.users_info[user_id]['custom_status'] = custom_status
+
+                        # Log the user information
+                        logging.info(f"[{datetime.now()}] {user_name} ({user_id}): Nickname: {nickname}, Status: {status}, Custom Status: {custom_status}")
+
+                        # Save user info to their specific file
+                        user_file_path = os.path.join(users_path, f'{user_id}.txt')
+                        with open(user_file_path, 'w', encoding='utf-8') as f:
+                            f.write(f"Name: {user_name}\n")
+                            f.write(f"User ID: {user_id}\n")
+                            f.write(f"Current Status: {status}\n")
+                            f.write(f"Custom Status: {custom_status}\n")
+                            f.write(f"Current Nickname: {nickname}\n")
+                            f.write(f"Past Nicknames: {', '.join(self.users_info[user_id]['nicknames'])}\n")
+                            f.write(f"Logs:\n")
+
+            self.setup_logger()
+
+    async def on_member_update(self, before, after):
+        """Called when a member's information is updated (e.g., nickname change)"""
+        if before.nick != after.nick:
+            # Log nickname change
+            logging.info(f"Nickname changed for {after.name} ({after.id}): {before.nick} -> {after.nick}")
+        
+        if before.status != after.status:
+            # Log status change
+            logging.info(f"Status changed for {after.name} ({after.id}): {before.status} -> {after.status}")
+
+            # Save the updated status and log it in their respective file
+            user_file_path = os.path.join(users_path, f'{after.id}.txt')
+            with open(user_file_path, 'a', encoding='utf-8') as f:
+                f.write(f"Status updated: {after.status} on {datetime.now()}\n")
+                f.write(f"Custom Status: {after.activity.name if after.activity else 'No custom status'}\n")
+
 intents = discord.Intents.default()
 intents.message_content = True
-intents.messages = True
+intents.members = True
+intents.presences = True
 
 client = Client(intents=intents)
 client.run(DISCORD_TOKEN)
