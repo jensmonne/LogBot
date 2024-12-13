@@ -27,21 +27,36 @@ class Client(discord.Client):
         self.load_user_data()
 
     def setup_logger(self):
+        """Set up or update the logger to handle log rotation with nested directories."""
         now = datetime.now()
-        filename = f'{logs_path}/discord_{now.strftime("%Y-%m-%d_%H")}.log'
+        
+        # Create directories for year, month, and day
+        year_path = os.path.join(logs_path, str(now.year))
+        month_path = os.path.join(year_path, f"{now.month:02}")
+        day_path = os.path.join(month_path, f"{now.day:02}")
+        os.makedirs(day_path, exist_ok=True)
+        
+        # Construct the log filename
+        filename = os.path.join(day_path, f'discord_{now.strftime("%H")}.log')
         
         if self.current_log_file != filename:
             self.current_log_file = filename
-
+            
+            # Ensure the file exists
             with open(self.current_log_file, 'a') as file:
                 pass
-
-            if self.log_file_handler:
-                logging.getLogger('discord').removeHandler(self.log_file_handler)
-                self.log_file_handler.close()
-
+            
+            # Remove all existing handlers
+            root_logger = logging.getLogger()
+            if root_logger.hasHandlers():
+                for handler in root_logger.handlers[:]:
+                    root_logger.removeHandler(handler)
+                    handler.close()
+            
+            # Create a new file handler
             self.log_file_handler = logging.FileHandler(filename=self.current_log_file, encoding='utf-8', mode='a')
-
+            
+            # Configure logging
             logging.basicConfig(
                 level=logging.INFO,
                 handlers=[self.log_file_handler, logging.StreamHandler()],
@@ -122,6 +137,7 @@ class Client(discord.Client):
 
     async def repeating_task(self):
         while True:
+            self.setup_logger()
             await asyncio.sleep(120)
 
             logging.info(f"[{datetime.now()}] Logging users")
