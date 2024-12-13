@@ -10,11 +10,9 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 AUTHOR_ID = os.getenv('AUTHOR_ID')
 
-logs_path = './discord_logs/test_logs'
+logs_path = './discord_logs'
 images_path = './discord_images'
 users_path = './discord_users'
-os.makedirs(logs_path, exist_ok=True)
-os.makedirs(images_path, exist_ok=True)
 os.makedirs(users_path, exist_ok=True)
 
 class Client(discord.Client):
@@ -22,40 +20,41 @@ class Client(discord.Client):
         super().__init__(intents=intents, *args, **kwargs)
         self.current_log_file = None
         self.log_file_handler = None
-        self.setup_logger()
         self.users_info = {}
         self.load_user_data()
 
-    def setup_logger(self):
+    def setup_logger(self, guild_name, channel_name):
         """Set up or update the logger to handle log rotation with nested directories."""
         now = datetime.now()
-        
-        # Create directories for year, month, and day
-        year_path = os.path.join(logs_path, str(now.year))
+
+        # Create directories for guild, channel, year, month, and day
+        guild_path = os.path.join(logs_path, guild_name)
+        channel_path = os.path.join(guild_path, channel_name)
+        year_path = os.path.join(channel_path, str(now.year))
         month_path = os.path.join(year_path, f"{now.month:02}")
         day_path = os.path.join(month_path, f"{now.day:02}")
         os.makedirs(day_path, exist_ok=True)
-        
+
         # Construct the log filename
         filename = os.path.join(day_path, f'discord_{now.strftime("%H")}.log')
-        
+
         if self.current_log_file != filename:
             self.current_log_file = filename
-            
+
             # Ensure the file exists
             with open(self.current_log_file, 'a') as file:
                 pass
-            
+
             # Remove all existing handlers
             root_logger = logging.getLogger()
             if root_logger.hasHandlers():
                 for handler in root_logger.handlers[:]:
                     root_logger.removeHandler(handler)
                     handler.close()
-            
+
             # Create a new file handler
             self.log_file_handler = logging.FileHandler(filename=self.current_log_file, encoding='utf-8', mode='a')
-            
+
             # Configure logging
             logging.basicConfig(
                 level=logging.INFO,
@@ -86,17 +85,18 @@ class Client(discord.Client):
                             'custom_status': custom_status,
                             'nicknames': past_nicknames
                         }
-                        
+
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
         self.bot_loop_task = asyncio.create_task(self.repeating_task())
 
     async def on_message(self, message):
-        print(f'Message received from {message.author}: {message.content}')
+        guild_name = message.guild.name if message.guild else "DMs"
+        channel_name = message.channel.name if message.guild else "DMs"
+        
+        self.setup_logger(guild_name, channel_name)
 
-        self.setup_logger()
-
-        logging.info(f'[{datetime.now()}] {message.author}: {message.content if message.content else "Send a File"}')
+        logging.info(f'[{datetime.now()}] {message.author}: {message.content if message.content else "Sent a File"}')
 
         if message.content.startswith('!log'):
             if message.author.id == int(AUTHOR_ID):
@@ -115,18 +115,14 @@ class Client(discord.Client):
                 await message.channel.send("You don't have permission to use this command.")
 
         if message.attachments:
-            sender_name = message.author.name
-            sender_id = message.author.id
-            server_name = message.guild.name if message.guild else "DMs"
-
-            user_folder = f"{images_path}/{sender_name}_{sender_id}"
+            user_folder = os.path.join(images_path, guild_name, channel_name, f"{message.author.name}_{message.author.id}")
             os.makedirs(user_folder, exist_ok=True)
 
             for attachment in message.attachments:
                 if attachment.content_type and "image" in attachment.content_type:
                     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                    image_name = f"{timestamp}_{server_name.replace(' ', '_')}.png"
-                    image_path = f"{user_folder}/{image_name}"
+                    image_name = f"{timestamp}.png"
+                    image_path = os.path.join(user_folder, image_name)
 
                     try:
                         await attachment.save(image_path)
@@ -137,7 +133,6 @@ class Client(discord.Client):
 
     async def repeating_task(self):
         while True:
-            self.setup_logger()
             await asyncio.sleep(120)
 
             logging.info(f"[{datetime.now()}] Logging users")
@@ -172,13 +167,11 @@ class Client(discord.Client):
                             f.write(f"Past Nicknames: {', '.join(self.users_info[user_id]['nicknames'])}\n")
                             f.write(f"Logs:\n")
 
-            self.setup_logger()
-
     async def on_member_update(self, before, after):
         """Called when a member's information is updated (e.g., nickname change)"""
         if before.nick != after.nick:
             logging.info(f"Nickname changed for {after.name} ({after.id}): {before.nick} -> {after.nick}")
-        
+
         if before.status != after.status:
             logging.info(f"Status changed for {after.name} ({after.id}): {before.status} -> {after.status}")
 
