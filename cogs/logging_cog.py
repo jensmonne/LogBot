@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from datetime import datetime
 import logging
 from utils.logger import setup_logger
@@ -11,14 +11,16 @@ class LoggingCog(commands.Cog):
         self.bot = bot
         self.users_info = load_user_data()
 
-    @commands.Cog.listener()
-    async def on_ready(self):
-        # When the bot is ready, save user data for all members
+    @tasks.loop(hours=1)  # This will run every hour
+    async def save_data(self):
         for guild in self.bot.guilds:
             for member in guild.members:
-                # This ensures the user data for each member is saved when the bot starts
                 save_user_data(member, self.users_info)
-        print("User data saved on bot startup")
+        print("User data saved")
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        self.save_data.start()
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -36,7 +38,7 @@ class LoggingCog(commands.Cog):
 
         # Handle commands
         if message.content.startswith('!log'):
-            if message.author.id == int(os.getenv('AUTHOR_ID')):
+            if message.author.id == int(os.getenv('AUTHOR_ID')):  # Ensure this check is secure
                 await self.send_log_file(message)
             else:
                 await message.channel.send("You don't have permission to use this command.")
@@ -59,7 +61,7 @@ class LoggingCog(commands.Cog):
         if before.status != after.status:
             logging.info(f"Status changed for {after.name}: {before.status} -> {after.status}")
 
-        # Save user data
+        # Save user data for the updated member
         save_user_data(after, self.users_info)
 
 async def setup(bot):

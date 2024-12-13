@@ -13,13 +13,29 @@ def load_user_data():
 def save_user_data(member, users_info):
     user_id = str(member.id)
     guild_name = member.guild.name
-    data = {
-        'name': member.name,
-        'nickname': member.nick,
-        'status': str(member.status),
-        'custom_status': member.activity.name if member.activity else "No custom status",
-        'guild': guild_name,
-    }
-    users_info[user_id] = data
+
+    # If the user doesn't exist in the data, initialize an empty structure
+    if user_id not in users_info:
+        users_info[user_id] = {
+            'name': member.name,
+            'guilds': {}  # Key will be guild_name, value will hold the nicknames and statuses for that guild
+        }
+
+    # Check if this user is already in this guild
+    if guild_name not in users_info[user_id]['guilds']:
+        users_info[user_id]['guilds'][guild_name] = {
+            'nicknames': [],
+            'statuses': []
+        }
+
+    # Append the current nickname and status to the guild's data
+    if member.nick:
+        users_info[user_id]['guilds'][guild_name]['nicknames'].append(member.nick)
+    if member.activity:
+        users_info[user_id]['guilds'][guild_name]['statuses'].append(str(member.activity.name))
+    else:
+        users_info[user_id]['guilds'][guild_name]['statuses'].append("No custom status")
+
+    # Save the updated data to the user's JSON file
     with open(os.path.join(USERS_PATH, f"{user_id}.json"), 'w') as f:
-        json.dump(data, f, indent=4)
+        json.dump(users_info[user_id], f, indent=4)
