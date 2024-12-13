@@ -1,11 +1,5 @@
-# Ignore the folder where images are saved
-discord_images/
-
-# Ignore the folder where logs are saved
-discord_logs/
-
-# Ignore the folder where user data is saved
-discord_users/
-
 # Ignore the .env file
 .env
+
+# Ignore the pycache folders
+__pycache__
