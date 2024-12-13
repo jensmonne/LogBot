@@ -78,13 +78,19 @@ class Client(discord.Client):
                         custom_status = lines[3].split(":")[1].strip()
                         past_nicknames = lines[5].split(":")[1].strip().split(", ")
 
-                        self.users_info[int(user_id)] = {
-                            'name': user_name,
-                            'nickname': nickname,
-                            'status': status,
-                            'custom_status': custom_status,
-                            'nicknames': past_nicknames
-                        }
+                        # Store the user info for all guilds this user belongs to
+                        for guild_name in lines[6:]:
+                            guild_name = guild_name.strip().split(":")[1].strip()
+                            if guild_name not in self.users_info:
+                                self.users_info[guild_name] = {}
+
+                            self.users_info[guild_name][int(user_id)] = {
+                                'name': user_name,
+                                'nickname': nickname,
+                                'status': status,
+                                'custom_status': custom_status,
+                                'nicknames': past_nicknames
+                            }
 
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
@@ -115,14 +121,14 @@ class Client(discord.Client):
                 await message.channel.send("You don't have permission to use this command.")
 
         if message.attachments:
-            user_folder = os.path.join(images_path, guild_name, channel_name, f"{message.author.name}_{message.author.id}")
-            os.makedirs(user_folder, exist_ok=True)
+            now = datetime.now()
+            day_folder = os.path.join(images_path, guild_name, channel_name, str(now.year), f"{now.month:02}", f"{now.day:02}")
+            os.makedirs(day_folder, exist_ok=True)
 
             for attachment in message.attachments:
                 if attachment.content_type and "image" in attachment.content_type:
-                    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                    image_name = f"{timestamp}.png"
-                    image_path = os.path.join(user_folder, image_name)
+                    image_name = f"{now.strftime('%H-%M-%S')}_{message.author.name}_{message.author.id}.png"
+                    image_path = os.path.join(day_folder, image_name)
 
                     try:
                         await attachment.save(image_path)
@@ -140,22 +146,29 @@ class Client(discord.Client):
             if self.guilds:
                 for guild in self.guilds:
                     for member in guild.members:
+                        # Ignore the bot itself
+                        if member.bot:
+                            continue
+
                         user_id = member.id
                         user_name = member.name
                         nickname = member.nick if member.nick else "No nickname"
                         status = str(member.status)
                         custom_status = member.activity.name if member.activity else "No custom status"
 
-                        if user_id not in self.users_info:
-                            self.users_info[user_id] = {'name': user_name, 'nickname': nickname, 'status': status, 'custom_status': custom_status, 'nicknames': []}
+                        if guild.name not in self.users_info:
+                            self.users_info[guild.name] = {}
+
+                        if user_id not in self.users_info[guild.name]:
+                            self.users_info[guild.name][user_id] = {'name': user_name, 'nickname': nickname, 'status': status, 'custom_status': custom_status, 'nicknames': []}
                         else:
-                            if self.users_info[user_id]['nickname'] != nickname:
-                                self.users_info[user_id]['nicknames'].append(self.users_info[user_id]['nickname'])
-                                self.users_info[user_id]['nickname'] = nickname
-                            if self.users_info[user_id]['status'] != status:
-                                self.users_info[user_id]['status'] = status
-                            if self.users_info[user_id]['custom_status'] != custom_status:
-                                self.users_info[user_id]['custom_status'] = custom_status
+                            if self.users_info[guild.name][user_id]['nickname'] != nickname:
+                                self.users_info[guild.name][user_id]['nicknames'].append(self.users_info[guild.name][user_id]['nickname'])
+                                self.users_info[guild.name][user_id]['nickname'] = nickname
+                            if self.users_info[guild.name][user_id]['status'] != status:
+                                self.users_info[guild.name][user_id]['status'] = status
+                            if self.users_info[guild.name][user_id]['custom_status'] != custom_status:
+                                self.users_info[guild.name][user_id]['custom_status'] = custom_status
 
                         user_file_path = os.path.join(users_path, f'{user_id}.txt')
                         with open(user_file_path, 'w', encoding='utf-8') as f:
@@ -164,21 +177,28 @@ class Client(discord.Client):
                             f.write(f"Current Status: {status}\n")
                             f.write(f"Custom Status: {custom_status}\n")
                             f.write(f"Current Nickname: {nickname}\n")
-                            f.write(f"Past Nicknames: {', '.join(self.users_info[user_id]['nicknames'])}\n")
+                            f.write(f"Past Nicknames: {', '.join(self.users_info[guild.name][user_id]['nicknames'])}\n")
                             f.write(f"Logs:\n")
+                            f.write(f"Guilds: {', '.join([guild.name for guild in self.guilds if guild.get_member(user_id)])}\n")
 
     async def on_member_update(self, before, after):
         """Called when a member's information is updated (e.g., nickname change)"""
+        # Ignore the bot itself
+        if before.id == self.user.id or after.id == self.user.id:
+            return
+
         if before.nick != after.nick:
             logging.info(f"Nickname changed for {after.name} ({after.id}): {before.nick} -> {after.nick}")
 
         if before.status != after.status:
             logging.info(f"Status changed for {after.name} ({after.id}): {before.status} -> {after.status}")
 
-            user_file_path = os.path.join(users_path, f'{after.id}.txt')
-            with open(user_file_path, 'a', encoding='utf-8') as f:
-                f.write(f"Status updated: {after.status} on {datetime.now()}\n")
-                f.write(f"Custom Status: {after.activity.name if after.activity else 'No custom status'}\n")
+            for guild in self.guilds:
+                if guild.get_member(after.id):
+                    user_file_path = os.path.join(users_path, f'{after.id}.txt')
+                    with open(user_file_path, 'a', encoding='utf-8') as f:
+                        f.write(f"Status updated: {after.status} on {datetime.now()}\n")
+                        f.write(f"Custom Status: {after.activity.name if after.activity else 'No custom status'}\n")
 
 intents = discord.Intents.default()
 intents.message_content = True
