@@ -27,43 +27,47 @@ class Client(discord.Client):
         """Set up or update the logger to handle log rotation with nested directories."""
         now = datetime.now()
 
-        # Create directories for guild, channel, year, month, and day
+        # Create paths only once
         guild_path = os.path.join(logs_path, guild_name)
         channel_path = os.path.join(guild_path, channel_name)
-        year_path = os.path.join(channel_path, str(now.year))
-        month_path = os.path.join(year_path, f"{now.month:02}")
-        day_path = os.path.join(month_path, f"{now.day:02}")
-        os.makedirs(day_path, exist_ok=True)
+        day_path = self.get_day_path(channel_path, now)
 
         # Construct the log filename
         filename = os.path.join(day_path, f'discord_{now.strftime("%H")}.log')
 
         if self.current_log_file != filename:
             self.current_log_file = filename
+            self.create_log_file(day_path, filename)
 
-            # Ensure the file exists
-            with open(self.current_log_file, 'a') as file:
-                pass
+    def get_day_path(self, channel_path, now):
+        year_path = os.path.join(channel_path, str(now.year))
+        month_path = os.path.join(year_path, f"{now.month:02}")
+        day_path = os.path.join(month_path, f"{now.day:02}")
+        os.makedirs(day_path, exist_ok=True)
+        return day_path
 
-            # Remove all existing handlers
-            root_logger = logging.getLogger()
-            if root_logger.hasHandlers():
-                for handler in root_logger.handlers[:]:
-                    root_logger.removeHandler(handler)
-                    handler.close()
+    def create_log_file(self, day_path, filename):
+        """Create the log file and set up logging handlers."""
+        # Ensure the file exists
+        with open(filename, 'a', encoding='utf-8') as file:
+            pass
 
-            # Create a new file handler
-            self.log_file_handler = logging.FileHandler(filename=self.current_log_file, encoding='utf-8', mode='a')
+        # Remove old handlers and add new one
+        root_logger = logging.getLogger()
+        if root_logger.hasHandlers():
+            for handler in root_logger.handlers[:]:
+                root_logger.removeHandler(handler)
+                handler.close()
 
-            # Configure logging
-            logging.basicConfig(
-                level=logging.INFO,
-                handlers=[self.log_file_handler, logging.StreamHandler()],
-                format='%(message)s'
-            )
+        self.log_file_handler = logging.FileHandler(filename=filename, encoding='utf-8', mode='a')
+        logging.basicConfig(
+            level=logging.INFO,
+            handlers=[self.log_file_handler, logging.StreamHandler()],
+            format='%(message)s'
+        )
 
     def load_user_data(self):
-        """Load user data from files to retain past nicknames and logs"""
+        """Load user data from files to retain past nicknames and logs."""
         for filename in os.listdir(users_path):
             if filename.endswith('.txt'):
                 user_id = filename.split('.')[0]
@@ -78,13 +82,10 @@ class Client(discord.Client):
                         custom_status = lines[3].split(":")[1].strip()
                         past_nicknames = lines[5].split(":")[1].strip().split(", ")
 
-                        # Store the user info for all guilds this user belongs to
+                        # Store user info for all guilds this user belongs to
                         for guild_name in lines[6:]:
                             guild_name = guild_name.strip().split(":")[1].strip()
-                            if guild_name not in self.users_info:
-                                self.users_info[guild_name] = {}
-
-                            self.users_info[guild_name][int(user_id)] = {
+                            self.users_info.setdefault(guild_name, {})[int(user_id)] = {
                                 'name': user_name,
                                 'nickname': nickname,
                                 'status': status,
@@ -106,84 +107,85 @@ class Client(discord.Client):
 
         if message.content.startswith('!log'):
             if message.author.id == int(AUTHOR_ID):
-                if self.current_log_file:
-                    try:
-                        await message.channel.send(
-                            content="Here is your log file:",
-                            file=discord.File(self.current_log_file)
-                        )
-                    except Exception as e:
-                        logging.error(f"Error sending log file: {e}")
-                        await message.channel.send("There was an error sending the log file.")
-                else:
-                    await message.channel.send("No log file is currently available.")
+                await self.send_log_file(message)
             else:
                 await message.channel.send("You don't have permission to use this command.")
 
         if message.attachments:
-            now = datetime.now()
-            day_folder = os.path.join(images_path, guild_name, channel_name, str(now.year), f"{now.month:02}", f"{now.day:02}")
-            os.makedirs(day_folder, exist_ok=True)
+            await self.save_images(message, guild_name, channel_name)
 
-            for attachment in message.attachments:
-                if attachment.content_type and "image" in attachment.content_type:
-                    image_name = f"{now.strftime('%H-%M-%S')}_{message.author.name}_{message.author.id}.png"
-                    image_path = os.path.join(day_folder, image_name)
+    async def send_log_file(self, message):
+        """Send the current log file to the message channel."""
+        if self.current_log_file:
+            try:
+                await message.channel.send(content="Here is your log file:", file=discord.File(self.current_log_file))
+            except Exception as e:
+                logging.error(f"Error sending log file: {e}")
+                await message.channel.send("There was an error sending the log file.")
+        else:
+            await message.channel.send("No log file is currently available.")
 
-                    try:
-                        await attachment.save(image_path)
-                        logging.info(f"[{datetime.now()}] Saved image to {image_path}")
-                    except Exception as e:
-                        logging.error(f"[{datetime.now()}] Error saving image: {e}")
-                        await message.channel.send("There was an error saving the image.")
+    async def save_images(self, message, guild_name, channel_name):
+        """Save image attachments from a message."""
+        now = datetime.now()
+        day_folder = os.path.join(images_path, guild_name, channel_name, str(now.year), f"{now.month:02}", f"{now.day:02}")
+        os.makedirs(day_folder, exist_ok=True)
+
+        for attachment in message.attachments:
+            if attachment.content_type and "image" in attachment.content_type:
+                image_name = f"{now.strftime('%H-%M-%S')}_{message.author.name}_{message.author.id}.png"
+                image_path = os.path.join(day_folder, image_name)
+
+                try:
+                    await attachment.save(image_path)
+                    logging.info(f"[{datetime.now()}] Saved image to {image_path}")
+                except Exception as e:
+                    logging.error(f"[{datetime.now()}] Error saving image: {e}")
+                    await message.channel.send("There was an error saving the image.")
 
     async def repeating_task(self):
         while True:
             await asyncio.sleep(120)
-
             logging.info(f"[{datetime.now()}] Logging users")
-
             if self.guilds:
-                for guild in self.guilds:
-                    for member in guild.members:
-                        # Ignore the bot itself
-                        if member.bot:
-                            continue
+                await self.log_user_info()
 
-                        user_id = member.id
-                        user_name = member.name
-                        nickname = member.nick if member.nick else "No nickname"
-                        status = str(member.status)
-                        custom_status = member.activity.name if member.activity else "No custom status"
+    async def log_user_info(self):
+        """Log user information to files."""
+        for guild in self.guilds:
+            for member in guild.members:
+                if member.bot:
+                    continue
 
-                        if guild.name not in self.users_info:
-                            self.users_info[guild.name] = {}
+                user_id = member.id
+                user_name = member.name
+                nickname = member.nick if member.nick else "No nickname"
+                status = str(member.status)
+                custom_status = member.activity.name if member.activity else "No custom status"
 
-                        if user_id not in self.users_info[guild.name]:
-                            self.users_info[guild.name][user_id] = {'name': user_name, 'nickname': nickname, 'status': status, 'custom_status': custom_status, 'nicknames': []}
-                        else:
-                            if self.users_info[guild.name][user_id]['nickname'] != nickname:
-                                self.users_info[guild.name][user_id]['nicknames'].append(self.users_info[guild.name][user_id]['nickname'])
-                                self.users_info[guild.name][user_id]['nickname'] = nickname
-                            if self.users_info[guild.name][user_id]['status'] != status:
-                                self.users_info[guild.name][user_id]['status'] = status
-                            if self.users_info[guild.name][user_id]['custom_status'] != custom_status:
-                                self.users_info[guild.name][user_id]['custom_status'] = custom_status
+                self.users_info.setdefault(guild.name, {})
+                user_info = self.users_info[guild.name].setdefault(user_id, {
+                    'name': user_name, 'nickname': nickname, 'status': status,
+                    'custom_status': custom_status, 'nicknames': []
+                })
 
-                        user_file_path = os.path.join(users_path, f'{user_id}.txt')
-                        with open(user_file_path, 'w', encoding='utf-8') as f:
-                            f.write(f"Name: {user_name}\n")
-                            f.write(f"User ID: {user_id}\n")
-                            f.write(f"Current Status: {status}\n")
-                            f.write(f"Custom Status: {custom_status}\n")
-                            f.write(f"Current Nickname: {nickname}\n")
-                            f.write(f"Past Nicknames: {', '.join(self.users_info[guild.name][user_id]['nicknames'])}\n")
-                            f.write(f"Logs:\n")
-                            f.write(f"Guilds: {', '.join([guild.name for guild in self.guilds if guild.get_member(user_id)])}\n")
+                if user_info['nickname'] != nickname:
+                    user_info['nicknames'].append(user_info['nickname'])
+                    user_info['nickname'] = nickname
+                if user_info['status'] != status:
+                    user_info['status'] = status
+                if user_info['custom_status'] != custom_status:
+                    user_info['custom_status'] = custom_status
+
+                user_file_path = os.path.join(users_path, f'{user_id}.txt')
+                with open(user_file_path, 'w', encoding='utf-8') as f:
+                    f.write(f"Name: {user_name}\nUser ID: {user_id}\nCurrent Status: {status}\nCustom Status: {custom_status}\n")
+                    f.write(f"Current Nickname: {nickname}\nPast Nicknames: {', '.join(user_info['nicknames'])}\n")
+                    f.write(f"Logs:\n")
+                    f.write(f"Guilds: {', '.join([guild.name for guild in self.guilds if guild.get_member(user_id)])}\n")
 
     async def on_member_update(self, before, after):
-        """Called when a member's information is updated (e.g., nickname change)"""
-        # Ignore the bot itself
+        """Called when a member's information is updated (e.g., nickname change)."""
         if before.id == self.user.id or after.id == self.user.id:
             return
 
@@ -200,6 +202,7 @@ class Client(discord.Client):
                         f.write(f"Status updated: {after.status} on {datetime.now()}\n")
                         f.write(f"Custom Status: {after.activity.name if after.activity else 'No custom status'}\n")
 
+# Initialize the bot
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
